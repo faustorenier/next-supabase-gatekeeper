@@ -8,7 +8,8 @@ Built with **Next.js 16** (App Router, Server Actions, `proxy.ts`), **Supabase A
 
 1. **Sign-up** – a user fills in first name, last name, email, phone and password. Supabase Auth creates the account and a database trigger creates a matching row in `public.profiles` with `status = 'pending'` and no role.
 2. **Review** – an admin approves the request, assigning one of three roles (`admin`, `editor`, `viewer`), or rejects it.
-3. **Login** – credentials are checked first, then the profile status. Pending or rejected users are signed out immediately and shown the reason; approved users land on `/dashboard`.
+3. **Login** – credentials are checked first, then the profile status. Pending or rejected users are signed out immediately and shown the reason; approved users land on `/dashboard`, which shows content based on their role.
+4. **Revocation** – if an admin changes a user's status while they are logged in, the next page load signs them out and sends them back to `/login` with a notice.
 
 ### Roles
 
@@ -25,7 +26,7 @@ Authorization is enforced in the database, not only in the UI:
 - **Row Level Security** on `profiles`: users can read only their own row; only approved admins can read all rows and update them. There are no insert/delete policies — profiles are created exclusively by the sign-up trigger.
 - **No self-promotion**: users have no update policy on their own profile, and roles are never read from sign-up metadata (which the client controls).
 - **`public.is_admin()`** is a `security definer` helper so admin policies can query `profiles` without recursing into RLS.
-- **`proxy.ts`** refreshes the session on every request and redirects anonymous users away from protected routes. It is an optimistic check only; pages verify role and status server-side.
+- **`proxy.ts`** refreshes the session on every request and redirects anonymous users away from protected routes. It is an optimistic check only; pages verify role and status server-side through `requireProfile()` in `lib/auth.ts` (the data access layer).
 - The **secret key** is used only in `lib/supabase/admin.ts`, guarded by `server-only` so it can never end up in the client bundle.
 
 ## Project structure
@@ -34,8 +35,11 @@ Authorization is enforced in the database, not only in the UI:
 app/
   register/        Sign-up form + server action
   login/           Login form + server action (checks approval status)
+  dashboard/       Role-aware dashboard
   auth/actions.ts  Logout server action
+  auth/signout/    Route handler that ends the session for revoked users
 components/        Shared UI (form fields)
+lib/auth.ts        Data access layer: getCurrentProfile(), requireProfile(roles?)
 lib/supabase/
   client.ts        Browser client (Client Components)
   server.ts        Server client (Server Components, Server Actions)
@@ -101,11 +105,12 @@ Open [http://localhost:3000/register](http://localhost:3000/register) to request
 - [x] Session handling with `proxy.ts`
 - [x] Sign-up with pending status
 - [x] Login gated on approval status, logout
-- [ ] `/dashboard` with role-specific content
+- [x] `/dashboard` with role-specific content
 - [ ] `/admin` to approve/reject requests and assign roles
 - [ ] Email confirmation (requires custom SMTP)
 
 ## Notes
 
+- **Cache Components**: `cacheComponents` is enabled, so anything that reads the session must sit inside `<Suspense>`. `getCurrentProfile()` calls `connection()` first because Supabase checks token expiry with `Date.now()`, which Next.js rejects during prerendering.
 - **Test email addresses**: Supabase may reject addresses it considers fake or belonging to someone else (`email_address_invalid`). Use aliases of your own inbox, e.g. `you+editor@gmail.com`.
 - **Built-in SMTP**: Supabase's default email service only delivers to members of your project's team and is heavily rate limited. Configure a custom SMTP provider before enabling email confirmation.
